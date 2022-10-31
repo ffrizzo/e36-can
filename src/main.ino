@@ -80,7 +80,7 @@ void processCanICL3()
     {
     case HIGH:
         outCanMsg.buf[0] = 0xFB; // E36 AC Compressor does not have variable control. Set to max Torque 31nm
-        outCanMsg.buf[1] = readPressureSwitch(acStatus);
+        outCanMsg.buf[1] = calculateFanStage(acStatus);
         outCanMsg.buf[4] = 0xC0;
         break;
     default: // OFF
@@ -98,20 +98,29 @@ void processCanICL3()
     Can1.write(outCanMsg);
 }
 
-byte readPressureSwitch(int acStatus)
+/*
+* On E36 the pressure switch is a ON/OFF. On E46 a pressure sensor sensor is used.
+* Is it possible to replace a pressure switch with a pressure sensor to achieve a more linear
+* activation of th fan stage.
+*/
+byte calculateFanStage(int acStatus)
 {
     if (acStatus != HIGH) { return 0x0; }
 
     int pressureSwitch = digitalRead(AC_PRESSURE_SWITCH);
+    // If pressure switch is on set the stage to max(15)
     if (pressureSwitch == HIGH)
     {
         return 0xF0;
     }
 
+    // If pressure switch is off set the stage to intermediate level(8)
     return 0x80;
 }
 
 byte readTemperatureSensor() {
     long temperatureSensor = analogRead(TEMPERATURE_SENSOR);
-    return 0x1E; // Temperature Fixed in 30c
+    return 0x1E; // Temperature Fixed in 30C
+
+
 }
