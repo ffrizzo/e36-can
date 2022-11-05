@@ -3,7 +3,9 @@
 
 #define AC_INPUT PA6
 #define AC_PRESSURE_SWITCH PA7
-#define TEMPERATURE_SENSOR PA5
+#define AC_PRESSURE_SENSOR PB0
+
+#define EXTERNAL_TEMPERATURE_SENSOR PB1
 
 #define CAN_ICL2 0x613
 #define CAN_ICL3 0x615
@@ -33,7 +35,9 @@ void  initialize()
 
     pinMode(AC_INPUT, INPUT_PULLDOWN);
     pinMode(AC_PRESSURE_SWITCH, INPUT_PULLDOWN);
-    pinMode(TEMPERATURE_SENSOR, INPUT_ANALOG);
+    pinMode(AC_PRESSURE_SENSOR, INPUT_ANALOG);
+
+    pinMode(EXTERNAL_TEMPERATURE_SENSOR, INPUT_ANALOG);
 
     Can1.begin();
     Can1.setBaudRate(500000);
@@ -99,13 +103,34 @@ void processCanICL3()
 }
 
 /*
-* On E36 the pressure switch is a ON/OFF. On E46 a pressure sensor sensor is used.
+* On E36 the pressure switch is a ON/OFF. On E46 a pressure sensor is used.
 * Is it possible to replace a pressure switch with a pressure sensor to achieve a more linear
 * activation of th fan stage.
 */
 byte calculateFanStage(int acStatus)
 {
-    if (acStatus != HIGH) { return 0x0; }
+    if (acStatus != HIGH) { return 0x00; }
+
+    // If pressure sensor connected interpolate this to calculate Fan Stage
+    int pressureSensor = analogRead(AC_PRESSURE_SENSOR);
+    if (pressureSensor > 0)
+    {
+        if (pressureSensor > 28) {
+            return 0xF0;
+        } else if (pressureSensor > 23) {
+            return 0xD0;
+        } else if (pressureSensor > 21){
+            return 0xC0;
+        } else if (pressureSensor > 17) {
+            return 0xA0;
+        } else if (pressureSensor > 13) {
+            return 0x50;
+        } else if (pressureSensor > 9) {
+            return 0x20;
+        } else if (pressureSensor < 10) {
+            return 0x10;
+        }
+    }
 
     int pressureSwitch = digitalRead(AC_PRESSURE_SWITCH);
     // If pressure switch is on set the stage to max(15)
@@ -119,8 +144,8 @@ byte calculateFanStage(int acStatus)
 }
 
 byte readTemperatureSensor() {
-    long temperatureSensor = analogRead(TEMPERATURE_SENSOR);
+    long tempSensor = analogRead(EXTERNAL_TEMPERATURE_SENSOR);
+    Serial.println("External temperature sensor " + tempSensor);
+
     return 0x1E; // Temperature Fixed in 30C
-
-
 }
