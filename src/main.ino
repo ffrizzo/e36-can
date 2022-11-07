@@ -83,7 +83,7 @@ void processCanICL3()
     switch (acStatus)
     {
     case HIGH:
-        outCanMsg.buf[0] = 0xFB; // E36 AC Compressor does not have variable control. Set to max Torque 31nm
+        outCanMsg.buf[0] = 0xDF; // E36 AC Compressor does not have variable control. Set to max Torque 31nm
         outCanMsg.buf[1] = calculateFanStage(acStatus);
         outCanMsg.buf[4] = 0xC0;
         break;
@@ -139,8 +139,9 @@ byte calculateFanStage(int acStatus)
         return 0xF0;
     }
 
-    // If pressure switch is off set the stage to intermediate level(8)
-    return 0x80;
+    // TODO this will require adjustments based on vehicle speed
+    // If pressure switch is off set the stage to 6
+    return 0x60;
 }
 
 byte readTemperatureSensor() {
