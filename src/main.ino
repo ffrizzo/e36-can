@@ -10,11 +10,19 @@
 #define CAN_ICL2 0x613
 #define CAN_ICL3 0x615
 
+#define CAN_INTERVAL 200
+
+#define MIN_FAN_STAGE_PRESSURE_SWITCH 5
+#define MAX_FAN_STAGE_PRESSURE_SWITCH 15
+
 STM32_CAN Can1(CAN1, DEF);
 
-const int canInterval = 200;
 unsigned long previousCANMillis = 0;
 CAN_message_t outCanMsg;
+
+int previousACStatus = LOW;
+int currentFanStage = MIN_FAN_STAGE_PRESSURE_SWITCH;
+unsigned long fanStageCount = 0;
 
 void setup()
 {
@@ -44,7 +52,7 @@ void  initialize()
 }
 
 void processCan(long currentMillis){
-    if ((currentMillis - previousCANMillis) < canInterval)
+    if ((currentMillis - previousCANMillis) < CAN_INTERVAL)
     {
         return;
     }
@@ -55,7 +63,8 @@ void processCan(long currentMillis){
     previousCANMillis = currentMillis;
 }
 
-// Send 0x613 message to avoid can message error code.
+// Instrument cluster sends two Message over can.
+// The 0x613 is not used on e36 swap but this is needed to avoid CAN error code.
 // https://www.ms4x.net/index.php?title=CAN_Bus_ID_0x613_ICL2
 void processCanICL2()
 {
@@ -76,6 +85,9 @@ void processCanICL2()
 void processCanICL3()
 {
     int acStatus = digitalRead(AC_INPUT);
+    if (previousACStatus != acStatus) {
+        fanStageCount = 0;
+    }
 
     outCanMsg.id = CAN_ICL3;
     outCanMsg.len = 8;
@@ -84,37 +96,42 @@ void processCanICL3()
     {
     case HIGH:
         outCanMsg.buf[0] = 0xDF; // E36 AC Compressor does not have variable control. Set to max Torque 31nm
-        outCanMsg.buf[1] = calculateFanStage(acStatus);
         outCanMsg.buf[4] = 0xC0;
         break;
     default: // OFF
         outCanMsg.buf[0] = 0x00;
-        outCanMsg.buf[1] = 0x00;
         outCanMsg.buf[4] = 0x00;
         break;
     }
 
+    outCanMsg.buf[1] = calculateFanStage(acStatus);
     outCanMsg.buf[2] = 0x00;
     outCanMsg.buf[3] = readTemperatureSensor();
     outCanMsg.buf[5] = 0x00;
     outCanMsg.buf[6] = 0x00;
     outCanMsg.buf[7] = 0x00;
     Can1.write(outCanMsg);
+
+    previousACStatus = acStatus;
 }
 
 /*
 * On E36 the pressure switch is a ON/OFF. On E46 a pressure sensor is used.
 * Is it possible to replace a pressure switch with a pressure sensor to achieve a more linear
-* activation of th fan stage.
+* activation of the fan stage.
 */
 byte calculateFanStage(int acStatus)
 {
-    if (acStatus != HIGH) { return 0x00; }
-
-    // If pressure sensor connected interpolate this to calculate Fan Stage
+    // TODO this is not functional. Need to properly interpolate the voltage vs pressure
+    // If pressure sensor is connected interpolate this to calculate Fan Stage
     int pressureSensor = analogRead(AC_PRESSURE_SENSOR);
     if (pressureSensor > 0)
     {
+        // If AC is turned off but pressure is to high keep the fan running
+        if (acStatus == LOW && pressureSensor < 13) {
+            return 0x00;
+        }
+
         if (pressureSensor > 28) {
             return 0xF0;
         } else if (pressureSensor > 23) {
@@ -132,16 +149,45 @@ byte calculateFanStage(int acStatus)
         }
     }
 
+    return calculateFanStageWithPressureSwitch(acStatus);
+}
+
+byte calculateFanStageWithPressureSwitch(int acStatus)
+{
     int pressureSwitch = digitalRead(AC_PRESSURE_SWITCH);
-    // If pressure switch is on set the stage to max(15)
-    if (pressureSwitch == HIGH)
-    {
-        return 0xF0;
+
+    // Wait until low pressure or 20 cycles to turn off the fan when AC is turned off
+    if (acStatus == LOW) {
+        if (pressureSwitch == HIGH || fanStageCount%20 == 0) {
+            currentFanStage = MIN_FAN_STAGE_PRESSURE_SWITCH;
+            return 0x00;
+        }
+
+        fanStageCount++;
+        return MIN_FAN_STAGE_PRESSURE_SWITCH;
     }
 
-    // TODO this will require adjustments based on vehicle speed
-    // If pressure switch is off set the stage to 6
-    return 0x60;
+    // Will increase/decrease fan stage every 3 cycles of CAN_INTERVAL
+    // until reach out the MAX_FAN_STAGE_PRESSURE_SWITCH or MIN_FAN_STAGE_PRESSURE_SWITCH
+    switch (pressureSwitch) {
+    case LOW:
+        if (currentFanStage < MAX_FAN_STAGE_PRESSURE_SWITCH
+                 && (fanStageCount%3 == 0)) {
+            currentFanStage++;
+        }
+        break;
+    default:
+        if (currentFanStage > MIN_FAN_STAGE_PRESSURE_SWITCH
+                && (fanStageCount%3 == 0)) {
+            currentFanStage--;
+        }
+        break;
+    }
+
+    fanStageCount++;
+
+    String result = String(currentFanStage, HEX) + '0';
+    return result.toInt();
 }
 
 byte readTemperatureSensor() {
