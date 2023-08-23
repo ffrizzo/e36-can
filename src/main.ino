@@ -1,8 +1,9 @@
 #include "Arduino.h"
 #include "STM32_CAN.h"
 
-#define AC_INPUT PA6
-#define AC_PRESSURE_SWITCH PA7
+#define AC_INPUT PA5
+#define AC_PRESSURE_SWITCH_LOW PA6
+#define AC_PRESSURE_SWITCH_HIGH PA7
 #define AC_PRESSURE_SENSOR PB0
 
 #define EXTERNAL_TEMPERATURE_SENSOR PB1
@@ -12,8 +13,8 @@
 
 #define CAN_INTERVAL 200
 
-#define MIN_FAN_STAGE_PRESSURE_SWITCH 5
-#define MAX_FAN_STAGE_PRESSURE_SWITCH 15
+#define MIN_FAN_STAGE 2
+#define MAX_FAN_STAGE 15
 
 STM32_CAN Can1(CAN1, DEF);
 
@@ -21,7 +22,7 @@ unsigned long previousCANMillis = 0;
 CAN_message_t outCanMsg;
 
 int previousACStatus = LOW;
-int currentFanStage = MIN_FAN_STAGE_PRESSURE_SWITCH;
+int currentFanStage = MIN_FAN_STAGE;
 unsigned long fanStageCount = 0;
 
 void setup()
@@ -42,7 +43,9 @@ void  initialize()
     Serial.println("Initializing CAN module...");
 
     pinMode(AC_INPUT, INPUT_PULLDOWN);
-    pinMode(AC_PRESSURE_SWITCH, INPUT_PULLDOWN);
+    pinMode(AC_PRESSURE_SWITCH_LOW, INPUT_PULLDOWN);
+    pinMode(AC_PRESSURE_SWITCH_HIGH, INPUT_PULLDOWN);
+
     pinMode(AC_PRESSURE_SENSOR, INPUT_ANALOG);
 
     pinMode(EXTERNAL_TEMPERATURE_SENSOR, INPUT_ANALOG);
@@ -52,8 +55,7 @@ void  initialize()
 }
 
 void processCan(long currentMillis){
-    if ((currentMillis - previousCANMillis) < CAN_INTERVAL)
-    {
+    if ((currentMillis - previousCANMillis) < CAN_INTERVAL) {
         return;
     }
 
@@ -154,34 +156,55 @@ byte calculateFanStage(int acStatus)
 
 byte calculateFanStageWithPressureSwitch(int acStatus)
 {
-    int pressureSwitch = digitalRead(AC_PRESSURE_SWITCH);
+    bool pressureLow = digitalRead(AC_PRESSURE_SWITCH_LOW) == HIGH;
+    bool pressureHigh = digitalRead(AC_PRESSURE_SWITCH_HIGH) == HIGH;
 
     // Wait until low pressure or 20 cycles to turn off the fan when AC is turned off
     if (acStatus == LOW) {
-        if (pressureSwitch == HIGH || fanStageCount%20 == 0) {
-            currentFanStage = MIN_FAN_STAGE_PRESSURE_SWITCH;
-            return 0x00;
+        if ((pressureLow || pressureHigh) && fanStageCount % 20 == 0) {
+            fanStageCount++;
+
+            String result = String(currentFanStage, HEX) + '0';
+            return result.toInt();
         }
 
-        fanStageCount++;
-        return MIN_FAN_STAGE_PRESSURE_SWITCH;
+        currentFanStage = MIN_FAN_STAGE;
+        return 0x00;
     }
 
     // Will increase/decrease fan stage every 3 cycles of CAN_INTERVAL
-    // until reach out the MAX_FAN_STAGE_PRESSURE_SWITCH or MIN_FAN_STAGE_PRESSURE_SWITCH
-    switch (pressureSwitch) {
-    case LOW:
-        if (currentFanStage < MAX_FAN_STAGE_PRESSURE_SWITCH
-                 && (fanStageCount%3 == 0)) {
-            currentFanStage++;
+    // until reach out the MAX_FAN_STAGE or MIN_FAN_STAGE
+    if (fanStageCount % 3 == 0){
+        int switchState = 0;
+        int maxStage = MAX_FAN_STAGE;
+        int minStage = MIN_FAN_STAGE;
+
+        if (pressureHigh || pressureLow) {
+            switchState = 1;
+
+            if (pressureHigh) {
+                // If high pressure keep the min fan stage at minimum of ~50%
+                maxStage = MAX_FAN_STAGE;
+                minStage = MAX_FAN_STAGE / 2;
+            } else  if (pressureLow) {
+                // If low pressure keep the max fan stage at maximum of ~50%
+                maxStage = MAX_FAN_STAGE/2;
+                minStage = MIN_FAN_STAGE;
+            }
         }
-        break;
-    default:
-        if (currentFanStage > MIN_FAN_STAGE_PRESSURE_SWITCH
-                && (fanStageCount%3 == 0)) {
-            currentFanStage--;
+
+        switch (switchState) {
+        case LOW:
+            if (currentFanStage < maxStage) {
+                currentFanStage++;
+            }
+            break;
+        default:
+            if (currentFanStage > minStage) {
+                currentFanStage--;
+            }
+            break;
         }
-        break;
     }
 
     fanStageCount++;
