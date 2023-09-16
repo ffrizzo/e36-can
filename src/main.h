@@ -5,8 +5,10 @@
 #include "STM32_CAN.h"
 
 #define AC_INPUT PA5
+
+#define AC_PRESSURE_TYPE PA4
 #define AC_PRESSURE_SWITCH_LOW PA6
-#define AC_PRESSURE_SWITCH_HIGH PA7
+#define AC_PRESSURE_SWITCH_HIGH PA3
 #define AC_PRESSURE_SENSOR PB0
 
 #define EXTERNAL_TEMPERATURE_SENSOR PB1
@@ -19,14 +21,15 @@
 #define MIN_FAN_STAGE 2
 #define MAX_FAN_STAGE 15
 
+#define FAN_STAGE_LOW_PRESSURE 4
+#define FAN_STAGE_HIGH_PRESSURE 10
+
 STM32_CAN Can1(CAN1, DEF);
 
 unsigned long previousCANMillis = 0;
 CAN_message_t outCanMsg;
 
 int previousACStatus = LOW;
-int currentFanStage = MIN_FAN_STAGE;
-unsigned long fanStageCount = 0;
 
 void initialize();
 void processCan(long currentMillis);
@@ -44,6 +47,7 @@ void processCanICL3();
  * activation of the fan stage.
  */
 byte calculateFanStage(int acStatus);
+byte calculateFanStateWithPressureSensor(int accStatus);
 byte calculateFanStageWithPressureSwitch(int acStatus);
 byte readTemperatureSensor();
 

@@ -13,9 +13,11 @@ void initialize() {
     Serial.begin(115200);
     while (!Serial)
         ;
-    Serial.println("Initializing CAN module...");
+    Serial.println("Initializing module...");
 
     pinMode(AC_INPUT, INPUT_PULLDOWN);
+
+    pinMode(AC_PRESSURE_TYPE, INPUT);
     pinMode(AC_PRESSURE_SWITCH_LOW, INPUT_PULLDOWN);
     pinMode(AC_PRESSURE_SWITCH_HIGH, INPUT_PULLDOWN);
 
@@ -54,9 +56,7 @@ void processCanICL2() {
 
 void processCanICL3() {
     int acStatus = digitalRead(AC_INPUT);
-    if (previousACStatus != acStatus) {
-        fanStageCount = 0;
-    }
+    Serial.printf("AC Status is %d\n", acStatus);
 
     outCanMsg.id = CAN_ICL3;
     outCanMsg.len = 8;
@@ -84,90 +84,74 @@ void processCanICL3() {
 }
 
 byte calculateFanStage(int acStatus) {
-    // TODO this is not functional. Need to properly interpolate the voltage vs pressure
-    // If pressure sensor is connected interpolate this to calculate Fan Stage
-    int pressureSensor = analogRead(AC_PRESSURE_SENSOR);
-    if (pressureSensor > 0) {
-        // If AC is turned off but pressure is to high keep the fan running
-        if (acStatus == LOW && pressureSensor < 13) {
-            return 0x00;
-        }
-
-        if (pressureSensor > 28) {
-            return 0xF0;
-        } else if (pressureSensor > 23) {
-            return 0xD0;
-        } else if (pressureSensor > 21) {
-            return 0xC0;
-        } else if (pressureSensor > 17) {
-            return 0xA0;
-        } else if (pressureSensor > 13) {
-            return 0x50;
-        } else if (pressureSensor > 9) {
-            return 0x20;
-        } else if (pressureSensor < 10) {
-            return 0x10;
-        }
+    if (digitalRead(AC_PRESSURE_TYPE) == HIGH) {
+        return calculateFanStageWithPressureSwitch(acStatus);
     }
 
-    return calculateFanStageWithPressureSwitch(acStatus);
+    return calculateFanStateWithPressureSensor(acStatus);
+}
+
+byte calculateFanStateWithPressureSensor(int accStatus) {
+    Serial.println("calculate fan stage with pressure sensor");
+    // TODO this is not functional. Need to properly interpolate the voltage vs pressure
+    // If pressure sensor is connected interpolate this to calculate Fan Stage
+    // int pressureSensor = analogRead(AC_PRESSURE_SENSOR);
+    // if (pressureSensor > 0) {
+    //     // If AC is turned off but pressure is to high keep the fan running
+    //     if (acStatus == LOW && pressureSensor < 13) {
+    //         return 0x00;
+    //     }
+
+    //     if (pressureSensor > 28) {
+    //         return 0xF0;
+    //     } else if (pressureSensor > 23) {
+    //         return 0xD0;
+    //     } else if (pressureSensor > 21) {
+    //         return 0xC0;
+    //     } else if (pressureSensor > 17) {
+    //         return 0xA0;
+    //     } else if (pressureSensor > 13) {
+    //         return 0x50;
+    //     } else if (pressureSensor > 9) {
+    //         return 0x20;
+    //     } else if (pressureSensor < 10) {
+    //         return 0x10;
+    //     }
+    // }
+
+    // To be on safe side
+    String result = String(MAX_FAN_STAGE - 5, HEX) + '0';
+    return result.toInt();
 }
 
 byte calculateFanStageWithPressureSwitch(int acStatus) {
-    bool pressureLow = digitalRead(AC_PRESSURE_SWITCH_LOW) == HIGH;
-    bool pressureHigh = digitalRead(AC_PRESSURE_SWITCH_HIGH) == HIGH;
+    Serial.println("calculate fan stage with pressure switch");
 
-    // Wait until low pressure or 20 cycles to turn off the fan when AC is turned off
+    bool pressureIsLow = digitalRead(AC_PRESSURE_SWITCH_LOW) == HIGH;
+    bool pressureIsHigh = digitalRead(AC_PRESSURE_SWITCH_HIGH) == HIGH;
+
+    int stage = 0;
     if (acStatus == LOW) {
-        if ((pressureLow || pressureHigh) && fanStageCount % 20 == 0) {
-            fanStageCount++;
-
-            String result = String(currentFanStage, HEX) + '0';
-            return result.toInt();
+        if (pressureIsHigh) {
+            stage = FAN_STAGE_HIGH_PRESSURE;
+        } else if (pressureIsLow) {
+            stage = FAN_STAGE_LOW_PRESSURE;
+        } else {
+            stage = 0;
         }
 
-        currentFanStage = MIN_FAN_STAGE;
-        return 0x00;
-    }
-
-    // Will increase/decrease fan stage every 3 cycles of CAN_INTERVAL
-    // until reach out the MAX_FAN_STAGE or MIN_FAN_STAGE
-    if (fanStageCount % 3 == 0) {
-        int switchState = 0;
-        int maxStage = MAX_FAN_STAGE;
-        int minStage = MIN_FAN_STAGE;
-
-        if (pressureHigh || pressureLow) {
-            switchState = 1;
-
-            if (pressureHigh) {
-                // If high pressure keep the min fan stage at minimum of ~50%
-                maxStage = MAX_FAN_STAGE;
-                minStage = MAX_FAN_STAGE / 2;
-            } else if (pressureLow) {
-                // If low pressure keep the max fan stage at maximum of ~50%
-                maxStage = MAX_FAN_STAGE / 2;
-                minStage = MIN_FAN_STAGE;
-            }
-        }
-
-        switch (switchState) {
-            case LOW:
-                if (currentFanStage < maxStage) {
-                    currentFanStage++;
-                }
-                break;
-            default:
-                if (currentFanStage > minStage) {
-                    currentFanStage--;
-                }
-                break;
+    } else {
+        if (pressureIsHigh) {
+            stage = FAN_STAGE_HIGH_PRESSURE;
+        } else if (pressureIsLow) {
+            stage = FAN_STAGE_LOW_PRESSURE;
+        } else {
+            // If AC is ON eFan should run at the MIN_FAN_STAGE
+            stage = MIN_FAN_STAGE;
         }
     }
 
-    fanStageCount++;
-
-    String result = String(currentFanStage, HEX) + '0';
+    String result = String(stage, HEX) + '0';
     return result.toInt();
 }
 
