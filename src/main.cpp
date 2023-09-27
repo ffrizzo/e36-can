@@ -17,10 +17,8 @@ void initialize() {
 
     pinMode(AC_INPUT, INPUT_PULLDOWN);
 
-    pinMode(AC_PRESSURE_TYPE, INPUT);
-    pinMode(AC_PRESSURE_SWITCH_LOW, INPUT_PULLDOWN);
-    pinMode(AC_PRESSURE_SWITCH_HIGH, INPUT_PULLDOWN);
-
+    pinMode(AC_PRESSURE_TYPE, INPUT_PULLUP);
+    pinMode(AC_PRESSURE_SWITCH_HIGH, INPUT_PULLUP);
     pinMode(AC_PRESSURE_SENSOR, INPUT_ANALOG);
 
     pinMode(EXTERNAL_TEMPERATURE_SENSOR, INPUT_ANALOG);
@@ -56,7 +54,7 @@ void processCanICL2() {
 
 void processCanICL3() {
     int acStatus = digitalRead(AC_INPUT);
-    Serial.printf("AC Status is %d\n", acStatus);
+    Serial.printf("AC status is: %s\n", acStatus == 1 ? "on" : "off");
 
     outCanMsg.id = CAN_ICL3;
     outCanMsg.len = 8;
@@ -91,73 +89,65 @@ byte calculateFanStage(int acStatus) {
     return calculateFanStateWithPressureSensor(acStatus);
 }
 
-byte calculateFanStateWithPressureSensor(int accStatus) {
-    Serial.println("calculate fan stage with pressure sensor");
+byte calculateFanStateWithPressureSensor(int acStatus) {
     // TODO this is not functional. Need to properly interpolate the voltage vs pressure
     // If pressure sensor is connected interpolate this to calculate Fan Stage
     // int pressureSensor = analogRead(AC_PRESSURE_SENSOR);
     // if (pressureSensor > 0) {
-    //     // If AC is turned off but pressure is to high keep the fan running
+
+    int stage = MAX_FAN_STAGE - 5;
+    // If AC is turned off but pressure is to high keep the fan running
     //     if (acStatus == LOW && pressureSensor < 13) {
-    //         return 0x00;
+    //        stage = 0;
     //     }
 
     //     if (pressureSensor > 28) {
-    //         return 0xF0;
+    //         stage = 15;
     //     } else if (pressureSensor > 23) {
-    //         return 0xD0;
+    //         stage = 12;
     //     } else if (pressureSensor > 21) {
-    //         return 0xC0;
+    //         stage = 9;
     //     } else if (pressureSensor > 17) {
-    //         return 0xA0;
+    //         stage = 7;
     //     } else if (pressureSensor > 13) {
-    //         return 0x50;
+    //         stage = 5;
     //     } else if (pressureSensor > 9) {
-    //         return 0x20;
+    //         stage = 3;
     //     } else if (pressureSensor < 10) {
-    //         return 0x10;
+    //         stage = 2;
     //     }
     // }
 
-    // To be on safe side
-    String result = String(MAX_FAN_STAGE - 5, HEX) + '0';
-    return result.toInt();
+    Serial.printf("Fan stage %d calculate by pressure sensor\n", stage);
+    return FAN_STAGE_TO_HEX[stage];
 }
 
 byte calculateFanStageWithPressureSwitch(int acStatus) {
-    Serial.println("calculate fan stage with pressure switch");
-
-    bool pressureIsLow = digitalRead(AC_PRESSURE_SWITCH_LOW) == HIGH;
-    bool pressureIsHigh = digitalRead(AC_PRESSURE_SWITCH_HIGH) == HIGH;
-
+    bool pressureIsHigh = digitalRead(AC_PRESSURE_SWITCH_HIGH) == LOW;
     int stage = 0;
     if (acStatus == LOW) {
         if (pressureIsHigh) {
-            stage = FAN_STAGE_HIGH_PRESSURE;
-        } else if (pressureIsLow) {
-            stage = FAN_STAGE_LOW_PRESSURE;
+            stage = FAN_STAGE_AT_HIGH_PRESSURE;
         } else {
             stage = 0;
         }
 
     } else {
         if (pressureIsHigh) {
-            stage = FAN_STAGE_HIGH_PRESSURE;
-        } else if (pressureIsLow) {
-            stage = FAN_STAGE_LOW_PRESSURE;
+            stage = FAN_STAGE_AT_HIGH_PRESSURE;
         } else {
-            // If AC is ON eFan should run at the MIN_FAN_STAGE
-            stage = MIN_FAN_STAGE;
+            // If AC is ON eFan should run at the FAN_STAGE_LOW_PRESSURE
+            stage = FAN_STAGE_AT_LOW_PRESSURE;
         }
     }
 
-    String result = String(stage, HEX) + '0';
-    return result.toInt();
+    Serial.printf("Fan stage %d\n", stage);
+    return FAN_STAGE_TO_HEX[stage];
 }
 
 byte readTemperatureSensor() {
     long tempSensor = analogRead(EXTERNAL_TEMPERATURE_SENSOR);
-    Serial.println("External temperature sensor " + tempSensor);
+    Serial.printf("External temperature sensor %d\n", tempSensor);
 
     return 0x1E;  // Temperature Fixed in 30C
 }
