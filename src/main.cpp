@@ -4,11 +4,13 @@ const byte FAN_STAGE_TO_HEX[16] = {0x0, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70
 
 STM32_CAN Can1(CAN1, DEF);
 
-unsigned long previousCANMillis = 0;
-CAN_message_t outCanMsg;
+CAN_message_t canMsgRx;
+CAN_message_t canMsgTx;
 
+unsigned long previousCanICLMillis = 0;
+
+bool engineIsRunning = true;
 int previousACStatus = LOW;
-unsigned long acStatusChangedMillis = 0;
 
 void setup() {
     initialize();
@@ -33,83 +35,95 @@ void initialize() {
 
     pinMode(EXTERNAL_TEMPERATURE_SENSOR, INPUT_ANALOG);
 
-    previousACStatus = digitalRead(AC_INPUT);
-    acStatusChangedMillis = millis() - (30 * 1000);
-
     Can1.begin();
     Can1.setBaudRate(500000);
 }
 
 void processCan(long currentMillis) {
-    if ((currentMillis - previousCANMillis) < CAN_INTERVAL) {
+    // if (Can1.read(canMsgRx)) {
+    //     switch (canMsgRx.id) {
+    //         case DME2:
+    //             processCanReadDME2(canMsgRx);
+    //             break;
+    //     }
+    // }
+
+    processCanWriteICL(currentMillis);
+}
+
+void processCanReadDME2(CAN_message_t msg) {
+    byte byte3 = msg.buf[3];
+    engineIsRunning = bitRead(byte3, 3) == 1;
+    Serial.printf("Engine is running %s\n", engineIsRunning);
+}
+
+void processCanWriteICL(long currentMillis) {
+    if ((currentMillis - previousCanICLMillis) < CAN_INTERVAL) {
         return;
     }
 
-    Serial.println("Processing CAN Messages...");
-    processCanICL2();
-    processCanICL3(currentMillis);
-    previousCANMillis = currentMillis;
+    Serial.println("Processing ICL CAN Messages...");
+    processCanWriteICL2();
+    processCanWriteICL3();
+    previousCanICLMillis = currentMillis;
 }
 
-void processCanICL2() {
-    outCanMsg.id = CAN_ICL2;
-    outCanMsg.len = 8;
-    outCanMsg.buf[0] = 0x00;
-    outCanMsg.buf[1] = 0x00;
-    outCanMsg.buf[2] = 0x00;
-    outCanMsg.buf[3] = 0x00;
-    outCanMsg.buf[4] = 0x00;
-    outCanMsg.buf[5] = 0x00;
-    outCanMsg.buf[6] = 0x00;
-    outCanMsg.buf[7] = 0x00;
-    Can1.write(outCanMsg);
+void processCanWriteICL2() {
+    canMsgTx.id = CAN_ICL2;
+    canMsgTx.len = 8;
+    canMsgTx.buf[0] = 0x00;
+    canMsgTx.buf[1] = 0x00;
+    canMsgTx.buf[2] = 0x00;
+    canMsgTx.buf[3] = 0x00;
+    canMsgTx.buf[4] = 0x00;
+    canMsgTx.buf[5] = 0x00;
+    canMsgTx.buf[6] = 0x00;
+    canMsgTx.buf[7] = 0x00;
+    Can1.write(canMsgTx);
 }
 
-void processCanICL3(long currentMillis) {
+void processCanWriteICL3() {
     int acStatus = digitalRead(AC_INPUT);
     Serial.printf("AC status is: %s\n", acStatus == 1 ? "on" : "off");
-    if (acStatus != previousACStatus) {
-        acStatusChangedMillis = currentMillis;
-    }
 
-    outCanMsg.id = CAN_ICL3;
-    outCanMsg.len = 8;
+    canMsgTx.id = CAN_ICL3;
+    canMsgTx.len = 8;
 
-    switch (acStatus) {
-        case HIGH:
-            outCanMsg.buf[0] = 0xDF;  // E36 AC Compressor does not have variable control. Set to max Torque 31nm
-            outCanMsg.buf[4] = 0xC0;
-            break;
-        default:  // OFF
-            outCanMsg.buf[0] = 0x00;
-            outCanMsg.buf[4] = 0x00;
-            break;
-    }
+    if (engineIsRunning) {
+        if (acStatus != previousACStatus) {
+            // E46 sends a signal of ac requesting before sending the actual request for compressor activation
+            // this is valid for both states on/off
+            canMsgTx.buf[0] = 0x80;
+            canMsgTx.buf[1] = calculateFanStage(previousACStatus);
+        } else {
+            switch (acStatus) {
+                case HIGH:
+                    canMsgTx.buf[0] = 0xD9;  // E36 AC Compressor does not have variable control
+                    break;
+                default:  // OFF
+                    canMsgTx.buf[0] = 0x00;
+                    break;
+            }
 
-    outCanMsg.buf[1] = calculateFanStage(acStatus, currentMillis);
-    outCanMsg.buf[2] = 0x00;
-    outCanMsg.buf[3] = readTemperatureSensor();
-    outCanMsg.buf[5] = 0x00;
-    outCanMsg.buf[6] = 0x00;
-    outCanMsg.buf[7] = 0x00;
-    Can1.write(outCanMsg);
-
-    previousACStatus = acStatus;
-}
-
-byte calculateFanStage(int acStatus, long currentMillis) {
-    // eFan should change status after 30 secs of AC Status have beeing changed
-    int diff = (currentMillis - acStatusChangedMillis) * 0.001;
-    if (diff < 30) {
-        if (acStatus == HIGH) {
-            return FAN_STAGE_TO_HEX[0];
+            canMsgTx.buf[1] = calculateFanStage(acStatus);
         }
 
-        // if ac status was changed to off keep fun running for other 30secs
-        // Set the ac status to high will guarantee the fan runs on right stage
-        acStatus = HIGH;
+        previousACStatus = acStatus;
+    } else {
+        canMsgTx.buf[0] = 0x00;
+        canMsgTx.buf[1] = 0x00;
     }
 
+    canMsgTx.buf[2] = 0x00;
+    canMsgTx.buf[3] = readTemperatureSensor();
+    canMsgTx.buf[4] = 0x00;
+    canMsgTx.buf[5] = 0x00;
+    canMsgTx.buf[6] = 0x00;
+    canMsgTx.buf[7] = 0x00;
+    Can1.write(canMsgTx);
+}
+
+byte calculateFanStage(int acStatus) {
     if (digitalRead(AC_PRESSURE_SENSOR_TYPE) == HIGH) {
         return calculateFanStageWithPressureSwitch(acStatus);
     }
@@ -151,15 +165,16 @@ byte calculateFanStateWithPressureSensor(int acStatus) {
 }
 
 byte calculateFanStageWithPressureSwitch(int acStatus) {
-    // Pressure switch works with ground to provide a signal for second stage relay
-    bool pressureIsHigh = digitalRead(AC_PRESSURE_SWITCH_HIGH) == LOW;
-
     int stage = 0;
-    if (pressureIsHigh) {
-        stage = FAN_STAGE_AT_HIGH_PRESSURE;
-    } else if (acStatus == HIGH) {
-        // If AC is ON eFan should run at the FAN_STAGE_LOW_PRESSURE
-        stage = FAN_STAGE_AT_LOW_PRESSURE;
+    if (acStatus == HIGH) {
+        // Pressure switch works with ground to provide a signal for second stage relay
+        bool pressureIsHigh = digitalRead(AC_PRESSURE_SWITCH_HIGH) == LOW;
+        if (pressureIsHigh) {
+            stage = FAN_STAGE_AT_HIGH_PRESSURE;
+        } else {
+            // If AC is ON eFan should run at the FAN_STAGE_LOW_PRESSURE
+            stage = FAN_STAGE_AT_LOW_PRESSURE;
+        }
     }
 
     Serial.printf("Fan stage %d\n", stage);

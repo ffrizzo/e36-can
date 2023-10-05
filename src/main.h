@@ -12,6 +12,9 @@
 
 #define EXTERNAL_TEMPERATURE_SENSOR PB1
 
+#define DME1 316
+#define DME2 329
+
 #define CAN_ICL2 0x613
 #define CAN_ICL3 0x615
 
@@ -26,19 +29,23 @@
 void initialize();
 void processCan(long currentMillis);
 
+// DME2 t/index.php?title=Siemens_MS43_CAN_Bus#DME2_0x329
+void processCanReadDME2(CAN_message_t msg);
+
+void processCanWriteICL(long currentMillis);
 // Instrument cluster sends two Message over can.
 // The 0x613 is not used on e36 swap but this is needed to avoid CAN error code.
 // https://www.ms4x.net/index.php?title=CAN_Bus_ID_0x613_ICL2
-void processCanICL2();
+void processCanWriteICL2();
 // https://www.ms4x.net/index.php?title=CAN_Bus_ID_0x615_ICL3
-void processCanICL3(long currentMillis);
+void processCanWriteICL3();
 
 /*
  * On E36 the pressure switch is a ON/OFF. On E46 a pressure sensor is used.
  * Is it possible to replace a pressure switch with a pressure sensor to achieve a more linear
  * activation of the fan stage.
  */
-byte calculateFanStage(int acStatus, long currentMillis);
+byte calculateFanStage(int acStatus);
 byte calculateFanStateWithPressureSensor(int acStatus);
 byte calculateFanStageWithPressureSwitch(int acStatus);
 byte readTemperatureSensor();
