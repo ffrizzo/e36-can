@@ -18,7 +18,8 @@
 #define CAN_ICL2 0x613
 #define CAN_ICL3 0x615
 
-#define CAN_INTERVAL 200  // milliseconds
+#define CAN_READ_INTERVAL 10        // milliseconds
+#define CAN_ICL_WRITE_INTERVAL 200  // milliseconds
 
 #define MIN_FAN_STAGE 1
 #define MAX_FAN_STAGE 15
@@ -28,6 +29,8 @@
 
 void initialize();
 void processCan(long currentMillis);
+
+void processCanRead(long currentMillis);
 
 // DME2 t/index.php?title=Siemens_MS43_CAN_Bus#DME2_0x329
 void processCanReadDME2(CAN_message_t msg);
